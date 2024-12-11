@@ -1,0 +1,151 @@
+import tkinter as tk
+from tkinter import messagebox
+from PIL import ImageTk, Image
+import cv2
+import numpy as np
+import os
+from deepface import DeepFace
+
+
+class FaceRecognitionSystem:
+    def _init_(self, root):
+        self.root = root
+        self.root.title("Attendance System")
+        self.root.geometry("800x600")
+        self.root.maxsize(width=800, height=600)
+
+        # Load and resize background image
+        self.image = Image.open("imagebasic/bg.jpg")
+        self.image = self.image.resize((self.root.winfo_screenwidth(), self.root.winfo_screenheight()))
+        self.background_image = ImageTk.PhotoImage(self.image)
+        self.background_label = tk.Label(self.root, image=self.background_image)
+        self.background_label.place(x=0, y=0, relwidth=1, relheight=1)
+
+        # Label for the welcome message
+        self.update_delay = 400
+        self.s = 'Welcome to the Attendance System'
+        self.s_index = 0
+        self.l = tk.Label(self.root, text=self.s, font="Calibri 18 bold", bg='#CAEBF0')
+        self.l.place(x=250, y=100)
+        self.update()
+
+        # Button for marking attendance
+        self.mark_button = tk.Button(self.root, text="Mark Attendance", command=self.mark_attendance, padx=40, pady=20, bg='#CAEBF0', borderwidth=0, font="Times 14 bold")
+        self.mark_button.place(x=300, y=250)
+
+        # Initialize a set to track already processed students (those whose images have been saved)
+        self.processed_students = self.load_processed_students()
+
+    def hide_window(self):
+        self.root.destroy()
+
+    def update(self):
+        """Scrolling text for welcome message"""
+        double = self.s + ' ' + self.s
+        display = double[self.s_index:self.s_index+30]
+        self.l.config(text=display)
+        self.s_index += 1
+        if self.s_index >= len(double) // 2:
+            self.s_index = 0
+        self.root.after(self.update_delay, self.update)
+
+    def mark_attendance(self):
+        """Start webcam and perform face recognition"""
+        # Open the webcam
+        cap = cv2.VideoCapture(0)
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            # Convert the image to grayscale for face detection
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+            
+            # Detect faces in the frame
+            faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+            
+            for (x, y, w, h) in faces:
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                # Crop the face area from the frame
+                face_image = frame[y:y+h, x:x+w]
+                
+                # Perform face verification using DeepFace
+                student_images = self.get_student_images()  # Get list of images in "students" folder
+                for student_image in student_images:
+                    try:
+                        result = DeepFace.verify(face_image, student_image, model_name="VGG-Face", enforce_detection=False)
+                        if result["verified"]:
+                            student_name = os.path.basename(student_image).split('.')[0]
+                            if student_name not in self.processed_students:
+                                # If the student is not processed, mark attendance and save the image
+                                self.save_attendance(student_name)
+                                self.save_student_image(student_name, face_image)
+                                # Mark this student as processed
+                                self.processed_students.add(student_name)
+                            cv2.putText(frame, f"Attendance Marked for {student_name}", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                            break
+                    except Exception as e:
+                        print("Error during face recognition:", e)
+            
+            # Display the frame
+            cv2.imshow("Face Recognition", frame)
+
+            # Exit on pressing 'q'
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+        # Release the webcam and close windows
+        cap.release()
+        cv2.destroyAllWindows()
+
+    def get_student_images(self):
+        """Get list of student images from the 'students' folder."""
+        student_images = []
+        students_folder = "students"
+        if not os.path.exists(students_folder):
+            os.makedirs(students_folder)
+        
+        for filename in os.listdir(students_folder):
+            if filename.endswith(".jpg") or filename.endswith(".png"):
+                student_images.append(os.path.join(students_folder, filename))
+        return student_images
+
+    def save_attendance(self, student_name):
+        """Save the attendance to the 'attendance.txt' file."""
+        with open("attendance.txt", "a") as file:
+            file.write(f"{student_name} - Present\n")
+        print(f"Attendance marked for {student_name}")
+
+    def save_student_image(self, student_name, face_image):
+        """Save the detected student face image in a folder."""
+        student_folder = "attendance_images"
+        if not os.path.exists(student_folder):
+            os.makedirs(student_folder)
+        
+        # Save the detected face image
+        face_filename = f"{student_name}_{len(os.listdir(student_folder)) + 1}.jpg"
+        face_image_path = os.path.join(student_folder, face_filename)
+        cv2.imwrite(face_image_path, face_image)
+        print(f"Saved face image for {student_name} as {face_filename}")
+
+    def load_processed_students(self):
+        """Load the list of students who have already had their images saved."""
+        processed_students = set()
+        if os.path.exists("attendance.txt"):
+            with open("attendance.txt", "r") as file:
+                for line in file:
+                    student_name = line.split(" - ")[0]
+                    processed_students.add(student_name)
+        return processed_students
+
+
+def main():
+    root = tk.Tk()
+    app = FaceRecognitionSystem(root)
+    root.mainloop()
+
+
+if _name_ == "_main_":
+    main()
